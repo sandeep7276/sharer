@@ -70,7 +70,6 @@
     <h1>Share your Screenshot</h1>
     <div id="status">Loading image from the cloud...</div>
 
-    <!-- The image will be displayed here once loaded -->
     <img id="screenshotImage" src="" alt="Screenshot preview" style="display:none;">
 
     <br>
@@ -82,7 +81,6 @@
             const shareBtn = document.getElementById('shareBtn');
             const screenshotImage = document.getElementById('screenshotImage');
 
-            // 1. Get the image URL from the parameter in the address bar (e.g., ?imgUrl=...)
             const params = new URLSearchParams(window.location.search);
             const imageUrl = params.get('imgUrl');
 
@@ -93,47 +91,36 @@
             }
 
             try {
-                // 2. Fetch the image from the public URL provided.
-                // 'fetch' is a modern browser API to get resources from a URL.
                 const imageResponse = await fetch(imageUrl);
 
                 if (!imageResponse.ok) {
-                    // This handles errors like "404 Not Found".
                     throw new Error(`Failed to download image. Status: ${imageResponse.status}`);
                 }
                 
                 statusDiv.textContent = 'Image loaded! Ready to share.';
-                
-                // Convert the downloaded image data into a 'Blob', which is a file-like object.
                 const imageBlob = await imageResponse.blob();
-
-                // Create a proper File object, which is needed for the Web Share API.
                 const imageFile = new File([imageBlob], 'screenshot.jpg', { type: 'image/jpeg' });
-                
-                // Create a temporary local URL for the downloaded blob to display it on the page.
                 screenshotImage.src = URL.createObjectURL(imageBlob);
                 screenshotImage.style.display = 'block';
 
-                // 3. Prepare the data that we want to share.
+                // ===================================================================
+                // THE ONLY CHANGE IS HERE: We added the 'url' property.
+                // ===================================================================
                 const shareData = {
                     title: 'Check out my Screenshot!',
-                    text: 'I captured this from a cool app!',
-                    // The 'files' array is the key to sharing an image.
+                    text: 'I captured this from a cool app. You can get it here:',
+                    url: 'https://play.google.com/store/apps', // <-- !!! REPLACE THIS with your app's download link or website !!!
                     files: [imageFile]
                 };
+                // ===================================================================
 
-                // 4. Check if the browser *can* share this data and enable the button.
-                // Not all browsers (especially on desktop) support sharing files.
                 if (navigator.canShare && navigator.canShare(shareData)) {
                     shareBtn.disabled = false;
                     shareBtn.addEventListener('click', async () => {
                         try {
-                            // This opens the phone's native share dialog.
                             await navigator.share(shareData);
                             statusDiv.textContent = 'Shared successfully!';
                         } catch (err) {
-                            // This catches errors, but we ignore the 'AbortError' which happens
-                            // when the user simply closes the share dialog without picking an app.
                             if (err.name !== 'AbortError') {
                                 statusDiv.textContent = `Share failed: ${err.message}`;
                                 statusDiv.classList.add('error');
@@ -146,7 +133,6 @@
                 }
 
             } catch (err) {
-                // This catches network errors, like the phone being offline.
                 statusDiv.innerHTML = `<span class="error">Failed to load image.</span><br>Error: ${err.message}`;
                 console.error(err);
             }
