@@ -7,17 +7,18 @@
     <style>
         body { font-family: system-ui, sans-serif; text-align: center; background: #333; color: white; padding: 1em; }
         img { max-width: 90%; max-height: 60vh; border: 2px solid white; border-radius: 8px; margin-top: 1em; }
-        button { font-size: 1.2em; padding: 0.8em 1.2em; margin-top: 1em; border-radius: 8px; border: none; cursor: pointer; }
+        button { font-size: 1.2em; padding: 0.8em 1.2em; margin-top: 1em; border-radius: 8px; border: none; cursor: pointer; background-color: #2a9d8f; color: white; }
         button:disabled { background-color: #555; cursor: not-allowed; }
-        #status { font-style: italic; color: #ccc; }
+        #status { font-style: italic; color: #ccc; margin-top: 1em; padding: 0.5em; background-color: #444; border-radius: 8px; }
+        .error { color: #f94144; font-weight: bold; }
     </style>
 </head>
 <body>
     <h1>Share your Screenshot</h1>
-    <div id="status">Loading screenshot...</div>
+    <div id="status">Initializing...</div>
     <img id="screenshotImage" src="" alt="Screenshot" style="display:none;">
     <br>
-    <button id="shareBtn" disabled>Share</button>
+    <button id="shareBtn" disabled>2. Share</button>
 
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
@@ -30,18 +31,23 @@
             const localIp = params.get('localIp');
 
             if (!shareId || !localIp) {
-                statusDiv.textContent = 'Error: Missing share information.';
+                statusDiv.textContent = 'Error: Missing Share ID or IP Address from URL.';
+                statusDiv.classList.add('error');
                 return;
             }
 
             const unityServerUrl = `http://${localIp}:8080/get-shared-content?id=${shareId}`;
+            statusDiv.textContent = `Attempting to connect to game at: ${unityServerUrl}`;
 
             try {
                 // Fetch the image from the local Unity server
-                const imageResponse = await fetch(unityServerUrl);
+                const imageResponse = await fetch(unityServerUrl, { mode: 'cors' });
+                
                 if (!imageResponse.ok) {
-                    throw new Error(`Could not retrieve image (Status: ${imageResponse.status}). Is the Unity app still running?`);
+                    throw new Error(`Status ${imageResponse.status}. Could not get image.`);
                 }
+                
+                statusDiv.textContent = 'Connection successful! Downloading image...';
                 const imageBlob = await imageResponse.blob();
 
                 // Create a File object, which is needed for the Web Share API
@@ -50,7 +56,7 @@
                 // Display the image preview
                 screenshotImage.src = URL.createObjectURL(imageBlob);
                 screenshotImage.style.display = 'block';
-                statusDiv.textContent = 'Image loaded. Ready to share!';
+                statusDiv.textContent = 'Image loaded! Ready to share.';
 
                 // --- Prepare your share data ---
                 const shareData = {
@@ -69,17 +75,19 @@
                             statusDiv.textContent = 'Shared successfully!';
                         } catch (err) {
                             statusDiv.textContent = `Share failed: ${err.message}`;
+                            statusDiv.classList.add('error');
                         }
                     });
                 } else {
-                    statusDiv.textContent = 'Web Share API is not available on this browser or cannot share files.';
+                    statusDiv.textContent = 'This browser does not support the Web Share API for files.';
+                    statusDiv.classList.add('error');
                 }
 
             } catch (err) {
-                statusDiv.innerHTML = `Failed to load image from Unity.<br>Error: ${err.message}<br>Make sure you are on the same WiFi network.`;
+                statusDiv.innerHTML = `<span class="error">Failed to load image from game.</span><br>Error: ${err.message}<br><br><strong>Troubleshooting:</strong><br>1. Is your phone on the same WiFi as the Fire TV?<br>2. Check the on-screen log on your TV for error messages.`;
                 console.error(err);
             }
         });
     </script>
 </body>
-</html>```
+</html>
