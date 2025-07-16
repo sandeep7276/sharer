@@ -5,20 +5,76 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Share Screenshot</title>
     <style>
-        body { font-family: system-ui, sans-serif; text-align: center; background: #333; color: white; padding: 1em; }
-        img { max-width: 90%; max-height: 60vh; border: 2px solid white; border-radius: 8px; margin-top: 1em; }
-        button { font-size: 1.2em; padding: 0.8em 1.2em; margin-top: 1em; border-radius: 8px; border: none; cursor: pointer; background-color: #2a9d8f; color: white; }
-        button:disabled { background-color: #555; cursor: not-allowed; }
-        #status { font-style: italic; color: #ccc; margin-top: 1em; padding: 0.5em; background-color: #444; border-radius: 8px; }
-        .error { color: #f94144; font-weight: bold; }
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            text-align: center;
+            background-color: #2c2c2c;
+            color: #ffffff;
+            padding: 1em;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        h1 {
+            margin-bottom: 0.5em;
+        }
+        img {
+            max-width: 90%;
+            max-height: 60vh;
+            border: 3px solid #f0f0f0;
+            border-radius: 12px;
+            margin-top: 1em;
+            background-color: #444; /* Placeholder color */
+        }
+        button {
+            font-size: 1.2em;
+            font-weight: bold;
+            padding: 0.8em 1.2em;
+            margin-top: 1.5em;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            background-color: #007aff; /* A common 'share' blue */
+            color: white;
+            transition: background-color 0.2s;
+        }
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+        button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+        #status {
+            font-style: italic;
+            color: #b0b0b0;
+            margin-top: 1.5em;
+            padding: 0.5em;
+            background-color: #3a3a3a;
+            border-radius: 8px;
+            min-height: 2em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .error {
+            color: #ff4d4d;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
     <h1>Share your Screenshot</h1>
-    <div id="status">Initializing...</div>
-    <img id="screenshotImage" src="" alt="Screenshot" style="display:none;">
+    <div id="status">Loading image from the cloud...</div>
+
+    <!-- The image will be displayed here once loaded -->
+    <img id="screenshotImage" src="" alt="Screenshot preview" style="display:none;">
+
     <br>
-    <button id="shareBtn" disabled>2. Share</button>
+    <button id="shareBtn" disabled>Share</button>
 
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
@@ -26,65 +82,72 @@
             const shareBtn = document.getElementById('shareBtn');
             const screenshotImage = document.getElementById('screenshotImage');
 
+            // 1. Get the image URL from the parameter in the address bar (e.g., ?imgUrl=...)
             const params = new URLSearchParams(window.location.search);
-            const shareId = params.get('id');
-            const localIp = params.get('localIp');
+            const imageUrl = params.get('imgUrl');
 
-            if (!shareId || !localIp) {
-                statusDiv.textContent = 'Error: Missing Share ID or IP Address from URL.';
+            if (!imageUrl) {
+                statusDiv.textContent = 'Error: No image URL was provided in the link.';
                 statusDiv.classList.add('error');
                 return;
             }
 
-            const unityServerUrl = `http://${localIp}:8080/get-shared-content?id=${shareId}`;
-            statusDiv.textContent = `Attempting to connect to game at: ${unityServerUrl}`;
-
             try {
-                // Fetch the image from the local Unity server
-                const imageResponse = await fetch(unityServerUrl, { mode: 'cors' });
-                
+                // 2. Fetch the image from the public URL provided.
+                // 'fetch' is a modern browser API to get resources from a URL.
+                const imageResponse = await fetch(imageUrl);
+
                 if (!imageResponse.ok) {
-                    throw new Error(`Status ${imageResponse.status}. Could not get image.`);
+                    // This handles errors like "404 Not Found".
+                    throw new Error(`Failed to download image. Status: ${imageResponse.status}`);
                 }
                 
-                statusDiv.textContent = 'Connection successful! Downloading image...';
+                statusDiv.textContent = 'Image loaded! Ready to share.';
+                
+                // Convert the downloaded image data into a 'Blob', which is a file-like object.
                 const imageBlob = await imageResponse.blob();
 
-                // Create a File object, which is needed for the Web Share API
-                const imageFile = new File([imageBlob], 'unity-screenshot.jpg', { type: 'image/jpeg' });
+                // Create a proper File object, which is needed for the Web Share API.
+                const imageFile = new File([imageBlob], 'screenshot.jpg', { type: 'image/jpeg' });
                 
-                // Display the image preview
+                // Create a temporary local URL for the downloaded blob to display it on the page.
                 screenshotImage.src = URL.createObjectURL(imageBlob);
                 screenshotImage.style.display = 'block';
-                statusDiv.textContent = 'Image loaded! Ready to share.';
 
-                // --- Prepare your share data ---
+                // 3. Prepare the data that we want to share.
                 const shareData = {
                     title: 'Check out my Screenshot!',
-                    text: 'I captured this from a cool Unity app. You can get it here:',
-                    url: 'https://unity.com/', // Your download link
+                    text: 'I captured this from a cool app!',
+                    // The 'files' array is the key to sharing an image.
                     files: [imageFile]
                 };
 
-                // Check if the browser can share this data
+                // 4. Check if the browser *can* share this data and enable the button.
+                // Not all browsers (especially on desktop) support sharing files.
                 if (navigator.canShare && navigator.canShare(shareData)) {
                     shareBtn.disabled = false;
                     shareBtn.addEventListener('click', async () => {
                         try {
+                            // This opens the phone's native share dialog.
                             await navigator.share(shareData);
                             statusDiv.textContent = 'Shared successfully!';
                         } catch (err) {
-                            statusDiv.textContent = `Share failed: ${err.message}`;
-                            statusDiv.classList.add('error');
+                            // This catches errors, but we ignore the 'AbortError' which happens
+                            // when the user simply closes the share dialog without picking an app.
+                            if (err.name !== 'AbortError') {
+                                statusDiv.textContent = `Share failed: ${err.message}`;
+                                statusDiv.classList.add('error');
+                            }
                         }
                     });
                 } else {
-                    statusDiv.textContent = 'This browser does not support the Web Share API for files.';
+                    statusDiv.textContent = 'Sorry, your browser does not support sharing files.';
                     statusDiv.classList.add('error');
                 }
 
             } catch (err) {
-                statusDiv.innerHTML = `<span class="error">Failed to load image from game.</span><br>Error: ${err.message}<br><br><strong>Troubleshooting:</strong><br>1. Is your phone on the same WiFi as the Fire TV?<br>2. Check the on-screen log on your TV for error messages.`;
+                // This catches network errors, like the phone being offline.
+                statusDiv.innerHTML = `<span class="error">Failed to load image.</span><br>Error: ${err.message}`;
                 console.error(err);
             }
         });
