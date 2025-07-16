@@ -1,249 +1,85 @@
-/* UnityHttpServer.cs (Complete and Compatible with zxing.unity package) */
-
-using UnityEngine;
-using UnityEngine.UI;
-using System;
-using System.IO;
-using System.Net;
-using System.Text;
-using System.Threading;
-using System.Collections;
-using System.Collections.Concurrent;
-using System.Linq;
-using TMPro;
-
-using ZXing;
-using ZXing.QrCode;
-
-public class UnityHttpFleckServer : MonoBehaviour
-{
-    // --- Public fields ---
-    public RawImage qrCodeImage;
-    public TextMeshProUGUI infoText;
-    public int httpPort = 8080;
-    public ImageDisplayManager imageDisplayManager;
-
-    // --- Static Queues & Cache for Thread-Safe Communication ---
-    public static readonly ConcurrentQueue<string> ImageUploadQueue = new ConcurrentQueue<string>();
-    private static readonly ConcurrentQueue<Action<string>> ScreenshotRequestQueue = new ConcurrentQueue<Action<string>>();
-    
-    // Cache to hold screenshot data temporarily with a Share ID. Value is the JPG byte array.
-    private static readonly ConcurrentDictionary<string, byte[]> SharedContent = new ConcurrentDictionary<string, byte[]>();
-
-    private HttpListener httpListener;
-    private Thread httpThread;
-
-    // IMPORTANT: Set this to your hosted webpage URL in the Unity Inspector
-    public string hostedSharePageUrl = "https://your-github-username.github.io/your-repo-name/";
-
-    void Start()
-    {
-        Application.runInBackground = true;
-        if (qrCodeImage != null) qrCodeImage.enabled = false;
-        if (imageDisplayManager == null) Debug.LogError("ImageDisplayManager is not assigned!");
-
-        StartHttpServer();
-    }
-
-    void Update()
-    {
-        // Check for screenshot requests from the HTTP thread
-        if (ScreenshotRequestQueue.TryDequeue(out var callback))
-        {
-            StartCoroutine(CaptureScreenshotAndInvokeCallback(callback));
-        }
-    }
-
-    void StartHttpServer()
-    {
-        httpListener = new HttpListener();
-        httpListener.Prefixes.Add($"http://*:{httpPort}/");
-        httpListener.Start();
-
-        httpThread = new Thread(() =>
-        {
-            while (httpListener.IsListening)
-            {
-                try
-                {
-                    HttpListenerContext context = httpListener.GetContext();
-                    ThreadPool.QueueUserWorkItem(o => HandleHttpRequest(context));
-                }
-                catch (HttpListenerException) { /* Suppress errors on shutdown */ }
-                catch (Exception e) { Debug.LogError($"HTTP Thread Error: {e.Message}"); }
-            }
-        });
-        httpThread.IsBackground = true;
-        httpThread.Start();
-
-        string ip = GetLocalIPAddress();
-        string url = $"http://{ip}:{httpPort}";
-        if (infoText != null) infoText.text = $"Scan QR code or open:\n{url}";
-        GenerateAndDisplayQRCode(url);
-    }
-
-    private void HandleHttpRequest(HttpListenerContext context)
-    {
-        var request = context.Request;
-        var response = context.Response;
-        string path = request.Url.AbsolutePath;
-
-        // --- IMPORTANT: Add CORS Headers to all relevant responses ---
-        // This allows your hosted https page to request data from this http server.
-        response.AddHeader("Access-Control-Allow-Origin", new Uri(hostedSharePageUrl).GetLeftPart(UriPartial.Authority));
-
-        try
-        {
-            if (path == "/prepare-share")
-            {
-                // Step 1: Client asks to prepare a shareable screenshot
-                var shareId = Guid.NewGuid().ToString();
-                
-                // Use a callback to wait for the screenshot to be ready on the main thread
-                var waitHandle = new AutoResetEvent(false);
-                byte[] imageBytes = null;
-
-                ScreenshotRequestQueue.Enqueue(id => {
-                    imageBytes = SharedContent[id];
-                    waitHandle.Set(); // Signal that the image is ready
-                });
-                
-                waitHandle.WaitOne(5000); // Wait up to 5 seconds
-
-                if (imageBytes != null)
-                {
-                    SharedContent.TryAdd(shareId, imageBytes);
-                    byte[] buffer = Encoding.UTF8.GetBytes(shareId);
-                    response.ContentType = "text/plain";
-                    response.ContentLength64 = buffer.Length;
-                    response.OutputStream.Write(buffer, 0, buffer.Length);
-                }
-                else
-                {
-                    response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                }
-            }
-            else if (path == "/get-shared-content")
-            {
-                // Step 2: Hosted page asks for the image data using the Share ID
-                string id = request.QueryString.Get("id");
-                if (id != null && SharedContent.TryRemove(id, out byte[] imageBytes))
-                {
-                    response.ContentType = "image/jpeg";
-                    response.ContentLength64 = imageBytes.Length;
-                    response.OutputStream.Write(imageBytes, 0, imageBytes.Length);
-                }
-                else
-                {
-                    response.StatusCode = (int)HttpStatusCode.NotFound;
-                }
-            }
-            else if (path == "/" || path == "/index.html")
-            {
-                string htmlContent = GetIndexHtml(GetLocalIPAddress());
-                byte[] buffer = Encoding.UTF8.GetBytes(htmlContent);
-                response.ContentType = "text/html";
-                response.ContentLength64 = buffer.Length;
-                response.OutputStream.Write(buffer, 0, buffer.Length);
-            }
-            else
-            {
-                response.StatusCode = (int)HttpStatusCode.NotFound;
-            }
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"Request failed: {e.Message}\n{e.StackTrace}");
-            response.StatusCode = (int)HttpStatusCode.InternalServerError;
-        }
-        finally
-        {
-            response.OutputStream.Close();
-        }
-    }
-    
-    private IEnumerator CaptureScreenshotAndInvokeCallback(Action<string> callback)
-    {
-        yield return new WaitForEndOfFrame();
-        var screenTexture = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
-        screenTexture.ReadPixels(new Rect(0, 0, Screen.width, Screen.height), 0, 0);
-        screenTexture.Apply();
-        byte[] imageBytes = screenTexture.EncodeToJPG(80);
-        Destroy(screenTexture);
-        
-        string id = Guid.NewGuid().ToString(); // Create a temp ID for the callback
-        SharedContent.TryAdd(id, imageBytes);
-        callback(id);
-    }
-    
-    // Modified to pass in the local IP and hosted page URL
-    string GetIndexHtml(string localIp)
-    {
-        return $@"
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Unity Local Controller</title>
-    <meta name=""viewport"" content=""width=device-width, initial-scale=1.0, user-scalable=no"">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Share Screenshot</title>
+    <style>
+        body { font-family: system-ui, sans-serif; text-align: center; background: #333; color: white; padding: 1em; }
+        img { max-width: 90%; max-height: 60vh; border: 2px solid white; border-radius: 8px; margin-top: 1em; }
+        button { font-size: 1.2em; padding: 0.8em 1.2em; margin-top: 1em; border-radius: 8px; border: none; cursor: pointer; }
+        button:disabled { background-color: #555; cursor: not-allowed; }
+        #status { font-style: italic; color: #ccc; }
+    </style>
 </head>
 <body>
-    <h1>Game View Sharer</h1>
-    <button id=""prepareShareBtn"">Prepare to Share Screenshot</button>
-    <div id=""status""></div>
+    <h1>Share your Screenshot</h1>
+    <div id="status">Loading screenshot...</div>
+    <img id="screenshotImage" src="" alt="Screenshot" style="display:none;">
+    <br>
+    <button id="shareBtn" disabled>Share</button>
+
     <script>
-        const prepareShareBtn = document.getElementById('prepareShareBtn');
-        const statusDiv = document.getElementById('status');
-        const hostedPage = '{hostedSharePageUrl}';
-        const localIp = '{localIp}';
+        document.addEventListener('DOMContentLoaded', async () => {
+            const statusDiv = document.getElementById('status');
+            const shareBtn = document.getElementById('shareBtn');
+            const screenshotImage = document.getElementById('screenshotImage');
 
-        prepareShareBtn.addEventListener('click', () => {{
-            statusDiv.textContent = 'Generating screenshot...';
-            prepareShareBtn.disabled = true;
+            const params = new URLSearchParams(window.location.search);
+            const shareId = params.get('id');
+            const localIp = params.get('localIp');
 
-            fetch('/prepare-share')
-                .then(response => {{
-                    if (!response.ok) throw new Error('Failed to prepare screenshot on server.');
-                    return response.text();
-                }})
-                .then(shareId => {{
-                    statusDiv.textContent = 'Redirecting to sharing page...';
-                    // Redirect to the hosted page with the ID and local IP
-                    window.location.href = `${{hostedPage}}?id=${{shareId}}&localIp=${{localIp}}`;
-                }})
-                .catch(error => {{
-                    statusDiv.textContent = `Error: ${{error.message}}`;
-                    prepareShareBtn.disabled = false;
-                }});
-        }});
+            if (!shareId || !localIp) {
+                statusDiv.textContent = 'Error: Missing share information.';
+                return;
+            }
+
+            const unityServerUrl = `http://${localIp}:8080/get-shared-content?id=${shareId}`;
+
+            try {
+                // Fetch the image from the local Unity server
+                const imageResponse = await fetch(unityServerUrl);
+                if (!imageResponse.ok) {
+                    throw new Error(`Could not retrieve image (Status: ${imageResponse.status}). Is the Unity app still running?`);
+                }
+                const imageBlob = await imageResponse.blob();
+
+                // Create a File object, which is needed for the Web Share API
+                const imageFile = new File([imageBlob], 'unity-screenshot.jpg', { type: 'image/jpeg' });
+                
+                // Display the image preview
+                screenshotImage.src = URL.createObjectURL(imageBlob);
+                screenshotImage.style.display = 'block';
+                statusDiv.textContent = 'Image loaded. Ready to share!';
+
+                // --- Prepare your share data ---
+                const shareData = {
+                    title: 'Check out my Screenshot!',
+                    text: 'I captured this from a cool Unity app. You can get it here:',
+                    url: 'https://unity.com/', // Your download link
+                    files: [imageFile]
+                };
+
+                // Check if the browser can share this data
+                if (navigator.canShare && navigator.canShare(shareData)) {
+                    shareBtn.disabled = false;
+                    shareBtn.addEventListener('click', async () => {
+                        try {
+                            await navigator.share(shareData);
+                            statusDiv.textContent = 'Shared successfully!';
+                        } catch (err) {
+                            statusDiv.textContent = `Share failed: ${err.message}`;
+                        }
+                    });
+                } else {
+                    statusDiv.textContent = 'Web Share API is not available on this browser or cannot share files.';
+                }
+
+            } catch (err) {
+                statusDiv.innerHTML = `Failed to load image from Unity.<br>Error: ${err.message}<br>Make sure you are on the same WiFi network.`;
+                console.error(err);
+            }
+        });
     </script>
 </body>
-</html>";
-    }
-
-    // --- Other methods (GenerateAndDisplayQRCode, GetLocalIPAddress, OnApplicationQuit) remain the same ---
-
-    private void GenerateAndDisplayQRCode(string text)
-    {
-        if (qrCodeImage == null) return;
-        var writer = new BarcodeWriter { Format = BarcodeFormat.QR_CODE, Options = new QrCodeEncodingOptions { Height = 256, Width = 256, Margin = 1 } };
-        var pixelData = writer.Write(text);
-        var texture = new Texture2D(256, 256) { filterMode = FilterMode.Point };
-        texture.SetPixels32(pixelData);
-        texture.Apply();
-        qrCodeImage.texture = texture;
-        qrCodeImage.enabled = true;
-    }
-
-    string GetLocalIPAddress()
-    {
-        var host = Dns.GetHostEntry(Dns.GetHostName());
-        return host.AddressList.FirstOrDefault(ip => ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?.ToString() ?? "127.0.0.1";
-    }
-
-    void OnApplicationQuit()
-    {
-        httpListener?.Stop();
-        httpListener?.Close();
-        httpThread?.Abort();
-    }
-}
+</html>```
